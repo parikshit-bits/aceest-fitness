@@ -62,8 +62,6 @@ def init_db():
     conn.close()
 
 
-# ── THIS IS THE FIX: call init_db() at module load time ──────────────────────
-# Works whether Flask is started via `python app.py` OR `flask run` in Docker
 with app.app_context():
     init_db()
 
@@ -189,3 +187,4 @@ def get_progress(client_name):
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
+    

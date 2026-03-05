@@ -76,7 +76,8 @@ def test_add_client_invalid_program(client):
 
 
 def test_get_existing_client(client):
-    client.post("/clients", json={"name": "Ravi", "weight": 80.0, "program": "Muscle Gain (MG) - PPL"})
+    payload = {"name": "Ravi", "weight": 80.0, "program": "Muscle Gain (MG) - PPL"}
+    client.post("/clients", json=payload)
     res = client.get("/clients/Ravi")
     assert res.status_code == 200
     assert json.loads(res.data)["name"] == "Ravi"
@@ -104,13 +105,19 @@ def test_get_all_clients(client):
 # ── Calorie Calculation ───────────────────────────────────────────────────────
 
 def test_calorie_calculation_fat_loss(client):
-    res = client.post("/calories", json={"weight": 70.0, "program": "Fat Loss (FL) - 3 day"})
+    res = client.post(
+        "/calories",
+        json={"weight": 70.0, "program": "Fat Loss (FL) - 3 day"}
+    )
     assert res.status_code == 200
     assert json.loads(res.data)["calories"] == 70 * 22
 
 
 def test_calorie_calculation_muscle_gain(client):
-    res = client.post("/calories", json={"weight": 80.0, "program": "Muscle Gain (MG) - PPL"})
+    res = client.post(
+        "/calories",
+        json={"weight": 80.0, "program": "Muscle Gain (MG) - PPL"}
+    )
     assert res.status_code == 200
     assert json.loads(res.data)["calories"] == 80 * 35
 
@@ -128,7 +135,8 @@ def test_calorie_invalid_program(client):
 # ── Progress ──────────────────────────────────────────────────────────────────
 
 def test_save_progress(client):
-    res = client.post("/progress", json={"client_name": "Arjun", "week": "Week 01", "adherence": 85})
+    payload = {"client_name": "Arjun", "week": "Week 01", "adherence": 85}
+    res = client.post("/progress", json=payload)
     assert res.status_code == 201
 
 
@@ -138,7 +146,9 @@ def test_save_progress_missing_fields(client):
 
 
 def test_get_progress(client):
-    client.post("/progress", json={"client_name": "Arjun", "week": "Week 01", "adherence": 80})
-    client.post("/progress", json={"client_name": "Arjun", "week": "Week 02", "adherence": 90})
+    p1 = {"client_name": "Arjun", "week": "Week 01", "adherence": 80}
+    p2 = {"client_name": "Arjun", "week": "Week 02", "adherence": 90}
+    client.post("/progress", json=p1)
+    client.post("/progress", json=p2)
     data = json.loads(client.get("/progress/Arjun").data)
     assert len(data["progress"]) == 2

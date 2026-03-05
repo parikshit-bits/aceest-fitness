@@ -2,8 +2,9 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "aceest-fitness"
-        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        IMAGE_NAME  = "aceest-fitness"
+        IMAGE_TAG   = "${env.BUILD_NUMBER}"
+        LOCAL_BIN   = "/var/jenkins_home/.local/bin"
     }
 
     stages {
@@ -24,7 +25,7 @@ pipeline {
 
         stage('Lint') {
             steps {
-                sh 'flake8 app.py test_app.py --max-line-length=100 --break-system-packages || pip install --break-system-packages flake8 && flake8 app.py test_app.py --max-line-length=100'
+                sh '${LOCAL_BIN}/flake8 app.py test_app.py --max-line-length=100'
                 echo "Lint passed"
             }
         }

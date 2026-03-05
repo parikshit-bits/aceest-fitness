@@ -17,21 +17,21 @@ pipeline {
 
         stage('Build Environment') {
             steps {
-                sh 'pip install -r requirements.txt'
+                sh 'pip install --break-system-packages -r requirements.txt'
                 echo "Python dependencies installed"
             }
         }
 
         stage('Lint') {
             steps {
-                sh 'flake8 app.py test_app.py --max-line-length=100'
+                sh 'flake8 app.py test_app.py --max-line-length=100 --break-system-packages || pip install --break-system-packages flake8 && flake8 app.py test_app.py --max-line-length=100'
                 echo "Lint passed"
             }
         }
 
         stage('Unit Tests') {
             steps {
-                sh 'pytest test_app.py -v --tb=short'
+                sh 'python3 -m pytest test_app.py -v --tb=short'
             }
             post {
                 always {
@@ -51,7 +51,7 @@ pipeline {
             steps {
                 sh """
                     docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} \
-                        python -m pytest test_app.py -v --tb=short
+                        python3 -m pytest test_app.py -v --tb=short
                 """
                 echo "Containerized tests passed — Quality Gate cleared"
             }

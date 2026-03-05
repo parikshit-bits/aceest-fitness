@@ -223,4 +223,4 @@ The `post` block cleans up the Docker image after every run and logs overall pas
 | `fix/`     | Bug fix branches                     |
 
 Commit message format: `<type>(<scope>): <short description>`  
-Example: `feat(clients): add DELETE endpoint for client removal`
+Example: `feat(clients): add DELETE endpoint for client removal`# trigger

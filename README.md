@@ -38,7 +38,7 @@ aceest-fitness/
 
 ---
 
-## API cURLs
+## API cURL Examples
 
 ### Health Check
 ```bash
@@ -162,7 +162,7 @@ docker run -p 5000:5000 aceest-fitness
 
 ```bash
 # Without Docker
-python3 -m pytest test_app.py -v
+pytest test_app.py -v
 
 # Inside Docker
 docker run --rm aceest-fitness python -m pytest test_app.py -v --tb=short
@@ -202,14 +202,138 @@ The `Jenkinsfile` defines a declarative pipeline with six stages:
 6. **Quality Gate** — Runs the full Pytest suite inside the freshly built container as
    a final integration check.
 
-**To configure in Jenkins:**
-1. Create a new **Pipeline** project.
-2. Under *Pipeline Definition*, select **Pipeline script from SCM**.
-3. Set SCM to **Git** and provide your repository URL.
-4. Set the script path to `Jenkinsfile`.
-5. Save and click **Build Now**.
-
 The `post` block cleans up the Docker image after every run and logs overall pass/fail status.
+
+---
+
+## Jenkins Local Setup
+
+### Step 1: Run Jenkins in Docker
+
+```bash
+docker run -p 8080:8080 -p 50000:50000 \
+  -v jenkins_home:/var/jenkins_home \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  jenkins/jenkins:lts
+```
+
+Open `http://localhost:8080` in your browser.
+
+### Step 2: Unlock Jenkins
+
+Get the initial admin password:
+
+```bash
+docker exec $(docker ps -q --filter ancestor=jenkins/jenkins:lts) \
+  cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Paste it in the browser → click **Install suggested plugins** → create your admin user.
+
+### Step 3: Install Python, pip and Docker CLI inside Jenkins container
+
+Jenkins runs inside its own container and does not have Python or Docker by default.
+Run these commands to install them:
+
+```bash
+# Get the Jenkins container ID
+docker ps
+# Copy the container ID, e.g. e76f1ce5cf47
+
+# Install Python and pip
+docker exec -u root <container_id> apt-get update
+docker exec -u root <container_id> apt-get install -y python3 python3-pip docker.io
+
+# Create symlinks so `pip` and `python` commands work
+docker exec -u root <container_id> ln -s /usr/bin/python3 /usr/bin/python
+docker exec -u root <container_id> ln -s /usr/bin/pip3 /usr/bin/pip
+
+# Allow Jenkins to run Docker commands
+docker exec -u root <container_id> chmod 666 /var/run/docker.sock
+
+# Verify
+docker exec <container_id> pip --version
+docker exec <container_id> docker --version
+```
+
+Then restart Jenkins so the changes take effect:
+
+```bash
+docker restart <container_id>
+```
+
+> **Note:** pip installs packages to `/var/jenkins_home/.local/bin/` which is not on
+> PATH by default. The Jenkinsfile uses the full path
+> `/var/jenkins_home/.local/bin/flake8` to call flake8 directly.
+
+### Step 4: Create the Pipeline job in Jenkins
+
+1. Click **New Item**
+2. Enter name `aceest-fitness` → select **Pipeline** → click **OK**
+3. Under **Build Triggers** → check **GitHub hook trigger for GITScm polling**
+4. Scroll to **Pipeline** section
+5. Set **Definition** → `Pipeline script from SCM`
+6. Set **SCM** → `Git`
+7. Enter your repo URL → `https://github.com/<your-username>/aceest-fitness.git`
+8. Set **Branch** to `*/main`
+9. Set **Script Path** → `Jenkinsfile`
+10. Click **Save**
+
+### Step 5: Expose Jenkins via ngrok (for GitHub Webhooks)
+
+Jenkins runs on localhost and is not reachable by GitHub by default.
+ngrok creates a public tunnel to your local machine.
+
+```bash
+# Install ngrok
+brew install ngrok
+
+# In a new terminal tab, expose Jenkins port
+ngrok http 8080
+```
+
+Copy the public URL ngrok gives you, e.g.:
+```
+https://abc123.ngrok-free.app
+```
+
+> Keep this terminal tab open — closing it stops the tunnel.
+
+### Step 6: Add GitHub Webhook
+
+1. Go to your GitHub repo → **Settings → Webhooks → Add webhook**
+2. Fill in:
+   - **Payload URL:** `https://abc123.ngrok-free.app/github-webhook/`
+   - **Content type:** `application/json`
+   - **Trigger:** Just the push event
+3. Click **Add webhook**
+4. GitHub sends a ping — you should see a ✅ green tick next to the webhook
+
+### Step 7: Trigger the pipeline
+
+Make any small commit and push to `main`:
+
+```bash
+echo "# trigger" >> README.md
+git add .
+git commit -m "ci: trigger Jenkins pipeline test"
+git push origin main
+```
+
+Jenkins will auto-trigger via the webhook. Go to `http://localhost:8080` →
+click your job → **Console Output** to watch it live.
+
+### Expected successful output
+
+```
+Stage: Checkout           ✅
+Stage: Build Environment  ✅
+Stage: Lint               ✅
+Stage: Unit Tests         ✅
+Stage: Docker Build       ✅
+Stage: Quality Gate       ✅
+Finished: SUCCESS
+```
 
 ---
 

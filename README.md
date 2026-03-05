@@ -348,3 +348,10 @@ Finished: SUCCESS
 
 Commit message format: `<type>(<scope>): <short description>`  
 Example: `feat(clients): add DELETE endpoint for client removal`
+
+---
+
+## Pipeline Screenshots
+![](screenshots/1.png)
+![](screenshots/2.png)
+![](screenshots/3.png)

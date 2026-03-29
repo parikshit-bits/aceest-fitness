@@ -70,24 +70,21 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - name: Fetch Jenkins Crumb (CSRF token)
-        id: crumb
-        run: |
-          CRUMB=$(curl -s --fail \
-            --user "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_API_TOKEN }}" \
-            -H "ngrok-skip-browser-warning: true" \
-            "${{ secrets.JENKINS_URL }}/crumbIssuer/api/json" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['crumb'])")
-          echo "crumb=$CRUMB" >> $GITHUB_OUTPUT
-
       - name: Trigger Jenkins pipeline
         run: |
-          curl -v --fail \
+          HTTP_CODE=$(curl -s -o /tmp/jenkins_response.txt -w "%{http_code}" \
             -X POST \
             --user "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_API_TOKEN }}" \
-            -H "Jenkins-Crumb: ${{ steps.crumb.outputs.crumb }}" \
             -H "ngrok-skip-browser-warning: true" \
-            "${{ secrets.JENKINS_URL }}/job/${{ secrets.JENKINS_JOB_NAME }}/build"
+            "${{ secrets.JENKINS_URL }}/job/${{ secrets.JENKINS_JOB_NAME }}/build?token=${{ secrets.JENKINS_API_TOKEN }}")
+          echo "HTTP Status: $HTTP_CODE"
+          cat /tmp/jenkins_response.txt
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "✅ Jenkins triggered successfully!"
+          else
+            echo "❌ Jenkins trigger failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
 
       - name: Confirm trigger sent
         run: |

@@ -170,39 +170,72 @@ docker run --rm aceest-fitness python -m pytest test_app.py -v --tb=short
 
 ---
 
-## GitHub Actions — CI/CD Pipeline Overview
+## GitHub Actions — CI/CD Pipeline
 
 The pipeline is defined in `.github/workflows/main.yml` and is triggered automatically
 on every **push** or **pull request** to the `main` or `develop` branch.
 
-**Stages:**
+### Pipeline Stages
 
-1. **Build & Lint** — Installs Python dependencies and runs `flake8` to catch syntax
-   errors and style violations before any build begins.
-2. **Docker Image Assembly** — Builds the Docker image and verifies it was created
-   successfully. This stage only runs after the lint job passes.
-3. **Automated Testing in Container** — Rebuilds the Docker image and executes the
-   full Pytest suite *inside the container*, confirming the app behaves correctly in
-   the production-equivalent environment. This stage only runs after a successful Docker
-   build.
+| Stage | Description |
+|-------|-------------|
+| **Build & Lint** | Installs Python dependencies and runs `flake8` to catch syntax errors and style violations |
+| **Docker Image Assembly** | Builds the Docker image and verifies it was created successfully. Runs only after lint passes |
+| **Automated Testing (Pytest in Docker)** | Rebuilds the image and runs the full Pytest suite inside the container. Runs only after Docker build passes |
+| **Trigger Jenkins Build** | Fires the Jenkins pipeline via its remote API. Runs **only on pushes to `main`**, after all 3 jobs above pass |
 
-Each stage is a dependency of the next, so a failure in any stage halts the pipeline.
+Each stage is a dependency of the next — a failure in any stage halts the entire pipeline.
+
+### How the Jenkins Trigger Works
+
+Instead of relying on a GitHub webhook, the pipeline uses GitHub Actions Job 4 to
+actively call the Jenkins Remote Build API via `curl` after all tests pass. This means
+Jenkins is only triggered when the code is verified and healthy.
+
+```
+push to main
+    └── Build & Lint ✅
+            └── Docker Image Assembly ✅
+                    └── Automated Testing ✅
+                                └── Trigger Jenkins Build 🚀
+```
 
 ---
 
-## Jenkins BUILD Integration
+## Setting Up GitHub Actions Secrets
 
-The `Jenkinsfile` defines a declarative pipeline with six stages:
+The Jenkins trigger step requires 4 secrets to be configured in GitHub. These are
+encrypted and never exposed in logs or the workflow file.
 
-1. **Checkout** — Pulls latest source code from the connected GitHub repository.
-2. **Build Environment** — Installs Python dependencies via `pip`.
-3. **Lint** — Runs `flake8` as a quality gate for code style.
-4. **Unit Tests** — Executes `pytest` directly on the host build agent.
-5. **Docker Build** — Builds the Docker image tagged with the Jenkins build number.
-6. **Quality Gate** — Runs the full Pytest suite inside the freshly built container as
-   a final integration check.
+### Step 1: Generate a Jenkins API Token
 
-The `post` block cleans up the Docker image after every run and logs overall pass/fail status.
+1. Open Jenkins at `http://localhost:8080`
+2. Click on your username (top right) → **Security**
+3. Scroll to **API Token** → click **Add new Token**
+4. Give it a name (e.g. `github-actions`) → click **Generate**
+5. **Copy the token immediately** — Jenkins will never show it again
+
+### Step 2: Add Secrets to GitHub
+
+Go to your repo → **Settings → Secrets and variables → Actions → New repository secret**
+and add each of the following:
+
+| Secret Name | Value | Description |
+|-------------|-------|-------------|
+| `JENKINS_URL` | `https://<your-ngrok-url>.ngrok-free.dev` | Base ngrok URL (no trailing slash, no path) |
+| `JENKINS_JOB_NAME` | `aceest-fitness` | Exact job name as shown in Jenkins |
+| `JENKINS_USER` | `admin` | Your Jenkins username |
+| `JENKINS_API_TOKEN` | `<token from Step 1>` | Jenkins API token (not your password) |
+
+> **Important:** Secret names must match exactly — no spaces, no extra characters.
+
+### Step 3: Enable Remote Build Trigger in Jenkins
+
+1. Go to `http://localhost:8080/job/aceest-fitness/configure`
+2. Scroll to **Build Triggers**
+3. Check **"Trigger builds remotely (e.g., from scripts)"**
+4. Set the **Authentication Token** to the same value as your `JENKINS_API_TOKEN` secret
+5. Click **Save**
 
 ---
 
@@ -211,11 +244,15 @@ The `post` block cleans up the Docker image after every run and logs overall pas
 ### Step 1: Run Jenkins in Docker
 
 ```bash
-docker run -p 8080:8080 -p 50000:50000 \
+docker run -d --name jenkins \
+  -p 8080:8080 -p 50000:50000 \
   -v jenkins_home:/var/jenkins_home \
   -v /var/run/docker.sock:/var/run/docker.sock \
   jenkins/jenkins:lts
 ```
+
+> Using `--name jenkins` gives the container a fixed name so you can always reference
+> it by name instead of a random container ID.
 
 Open `http://localhost:8080` in your browser.
 
@@ -224,8 +261,7 @@ Open `http://localhost:8080` in your browser.
 Get the initial admin password:
 
 ```bash
-docker exec $(docker ps -q --filter ancestor=jenkins/jenkins:lts) \
-  cat /var/jenkins_home/secrets/initialAdminPassword
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
 ```
 
 Paste it in the browser → click **Install suggested plugins** → create your admin user.
@@ -233,13 +269,9 @@ Paste it in the browser → click **Install suggested plugins** → create your 
 ### Step 3: Install Python, pip and Docker CLI inside Jenkins container
 
 Jenkins runs inside its own container and does not have Python or Docker by default.
-Run these commands to install them:
+Run these commands to install them (replace `<container_id>` with your actual ID from `docker ps`):
 
 ```bash
-# Get the Jenkins container ID
-docker ps
-# Copy the container ID, e.g. e76f1ce5cf47
-
 # Install Python and pip
 docker exec -u root <container_id> apt-get update
 docker exec -u root <container_id> apt-get install -y python3 python3-pip docker.io
@@ -270,61 +302,66 @@ docker restart <container_id>
 
 1. Click **New Item**
 2. Enter name `aceest-fitness` → select **Pipeline** → click **OK**
-3. Under **Build Triggers** → check **GitHub hook trigger for GITScm polling**
-4. Scroll to **Pipeline** section
-5. Set **Definition** → `Pipeline script from SCM`
-6. Set **SCM** → `Git`
-7. Enter your repo URL → `https://github.com/<your-username>/aceest-fitness.git`
-8. Set **Branch** to `*/main`
-9. Set **Script Path** → `Jenkinsfile`
-10. Click **Save**
+3. Under **Build Triggers** → check **"Trigger builds remotely (e.g., from scripts)"**
+4. Set the **Authentication Token** to match your `JENKINS_API_TOKEN` GitHub secret
+5. Scroll to **Pipeline** section
+6. Set **Definition** → `Pipeline script from SCM`
+7. Set **SCM** → `Git`
+8. Enter your repo URL → `https://github.com/<your-username>/aceest-fitness.git`
+9. Set **Branch** to `*/main`
+10. Set **Script Path** → `Jenkinsfile`
+11. Click **Save**
 
-### Step 5: Expose Jenkins via ngrok (for GitHub Webhooks)
+### Step 5: Expose Jenkins via ngrok
 
-Jenkins runs on localhost and is not reachable by GitHub by default.
+Jenkins runs on localhost and is not reachable by GitHub Actions by default.
 ngrok creates a public tunnel to your local machine.
 
 ```bash
 # Install ngrok
 brew install ngrok
 
-# In a new terminal tab, expose Jenkins port
+# In a new terminal, expose Jenkins port
 ngrok http 8080
 ```
 
-Copy the public URL ngrok gives you, e.g.:
+Copy the `https://` URL ngrok gives you, e.g.:
 ```
-https://abc123.ngrok-free.app
+https://munificent-amelie-surroundedly.ngrok-free.dev
 ```
 
-> Keep this terminal tab open — closing it stops the tunnel.
+Update your `JENKINS_URL` GitHub secret with this URL whenever it changes.
 
-### Step 6: Add GitHub Webhook
+> **Note:** On the ngrok free tier, the URL changes every time you restart ngrok.
+> Keep the ngrok terminal open while running your pipeline.
+> ngrok's free tier also provides one static domain — use that to avoid updating
+> the secret each time.
 
-1. Go to your GitHub repo → **Settings → Webhooks → Add webhook**
-2. Fill in:
-   - **Payload URL:** `https://abc123.ngrok-free.app/github-webhook/`
-   - **Content type:** `application/json`
-   - **Trigger:** Just the push event
-3. Click **Add webhook**
-4. GitHub sends a ping — you should see a ✅ green tick next to the webhook
+### Step 6: Trigger the pipeline
 
-### Step 7: Trigger the pipeline
-
-Make any small commit and push to `main`:
+Make any commit and push to `main`:
 
 ```bash
-echo "# trigger" >> README.md
 git add .
-git commit -m "ci: trigger Jenkins pipeline test"
+git commit -m "ci: trigger pipeline"
 git push origin main
 ```
 
-Jenkins will auto-trigger via the webhook. Go to `http://localhost:8080` →
-click your job → **Console Output** to watch it live.
+GitHub Actions will run all 4 jobs automatically. Once the first 3 pass, Jenkins will
+be triggered via the remote API. Go to `http://localhost:8080` → click your job →
+watch the build run live.
 
 ### Expected successful output
 
+**GitHub Actions:**
+```
+Build & Lint              ✅  ~9s
+Docker Image Assembly     ✅  ~16s
+Automated Testing         ✅  ~17s
+Trigger Jenkins Build     ✅  ~2s
+```
+
+**Jenkins:**
 ```
 Stage: Checkout           ✅
 Stage: Build Environment  ✅
@@ -337,6 +374,22 @@ Finished: SUCCESS
 
 ---
 
+## Jenkins BUILD Integration
+
+The `Jenkinsfile` defines a declarative pipeline with six stages:
+
+1. **Checkout** — Pulls latest source code from the connected GitHub repository.
+2. **Build Environment** — Installs Python dependencies via `pip`.
+3. **Lint** — Runs `flake8` as a quality gate for code style.
+4. **Unit Tests** — Executes `pytest` directly on the host build agent.
+5. **Docker Build** — Builds the Docker image tagged with the Jenkins build number.
+6. **Quality Gate** — Runs the full Pytest suite inside the freshly built container as
+   a final integration check.
+
+The `post` block cleans up the Docker image after every run and logs overall pass/fail status.
+
+---
+
 ## Git Branching Strategy
 
 | Branch     | Purpose                              |
@@ -346,7 +399,7 @@ Finished: SUCCESS
 | `feature/` | Individual feature branches          |
 | `fix/`     | Bug fix branches                     |
 
-Commit message format: `<type>(<scope>): <short description>`  
+Commit message format: `<type>(<scope>): <short description>`
 Example: `feat(clients): add DELETE endpoint for client removal`
 
 ---
@@ -355,3 +408,6 @@ Example: `feat(clients): add DELETE endpoint for client removal`
 ![](screenshots/1.png)
 ![](screenshots/2.png)
 ![](screenshots/3.png)
+
+## GitHub Actions Screenshots
+![](screenshots/4.png)

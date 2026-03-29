@@ -61,3 +61,37 @@ jobs:
         run: |
           docker run --rm aceest-fitness:test \
             python -m pytest test_app.py -v --tb=short
+
+  # ── Job 4: Trigger Jenkins (only on merge to main) ───────────────────────────
+  trigger-jenkins:
+    name: Trigger Jenkins Build
+    runs-on: ubuntu-latest
+    needs: test-in-container
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Fetch Jenkins Crumb (CSRF token)
+        id: crumb
+        run: |
+          CRUMB=$(curl -s --fail \
+            --user "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_API_TOKEN }}" \
+            -H "ngrok-skip-browser-warning: true" \
+            "${{ secrets.JENKINS_URL }}/crumbIssuer/api/json" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['crumb'])")
+          echo "crumb=$CRUMB" >> $GITHUB_OUTPUT
+
+      - name: Trigger Jenkins pipeline
+        run: |
+          curl -v --fail \
+            -X POST \
+            --user "${{ secrets.JENKINS_USER }}:${{ secrets.JENKINS_API_TOKEN }}" \
+            -H "Jenkins-Crumb: ${{ steps.crumb.outputs.crumb }}" \
+            -H "ngrok-skip-browser-warning: true" \
+            "${{ secrets.JENKINS_URL }}/job/${{ secrets.JENKINS_JOB_NAME }}/build"
+
+      - name: Confirm trigger sent
+        run: |
+          echo "✅ Jenkins triggered successfully!"
+          echo "Commit : ${{ github.sha }}"
+          echo "By     : ${{ github.actor }}"
+          echo "Branch : ${{ github.ref_name }}"
